@@ -101,15 +101,21 @@ library(gt)</code></pre>
 <div id="using-gt-to-build-a-beautiful-efa-results-table" class="section level2">
 <h2>Using gt() to build a beautiful EFA results table</h2>
 <p>Below is the <code>fa_table</code> function that takes the factor analysis object from <code>psych::fa()</code> as its input and returns a clean table. Some code elements were adapted from <code>sjPlot::fa_tab()</code> and <a href="https://www.anthonyschmidt.co/post/2020-09-27-efa-tables-in-r/">a blogpost by Anthony Schmidt</a>.</p>
-<pre class="r"><code>fa_table &lt;- function(x, varlabels = NULL, title = &quot;Factor analysis results&quot;, diffuse = .10, small = .30, cross = .20) {
+<pre class="r"><code>fa_table &lt;- function(x, varlabels = NULL, title = &quot;Factor analysis results&quot;, diffuse = .10, small = .30, cross = .20, sort = TRUE) {
   #get sorted loadings
   require(dplyr)
   require(purrr)
   require(tibble)
   require(gt)
-  x &lt;- psych::fa.sort(x)
+  if(sort == TRUE) {
+    x &lt;- psych::fa.sort(x)
+  }
   if(!is.null(varlabels)) {
-    varlabels &lt;- varlabels[x$order]
+    if(length(varlabels) != nrow(x$loadings)) { warning(&quot;Number of variable labels and number of variables are unequal. Check your input!&quot;,
+                                                        call. = FALSE) }
+    if(sort == TRUE) {
+      varlabels &lt;- varlabels[x$order]
+      }
   }
   if(is.null(varlabels)) {varlabels &lt;- rownames(x$loadings)}
 
@@ -119,7 +125,8 @@ library(gt)</code></pre>
   factornamer &lt;- function(nfactors) {
     paste0(&quot;Factor_&quot;, 1:nfactors)}
   
-  fnames &lt;- factornamer(ncol(loadings))
+  nfactors &lt;- ncol(loadings)
+  fnames &lt;- factornamer(nfactors)
   names(loadings) &lt;- fnames
   
   # prepare locations
@@ -150,14 +157,15 @@ library(gt)</code></pre>
     # have unclear loadings
     return(removers)
   }
- 
- removable &lt;- getRemovableItems(loadings)
- 
+ if(nfactors &gt; 1) {
+   removable &lt;- getRemovableItems(loadings)
+   cross_loadings &lt;- purrr::map2(fnames, seq_along(fnames), function(f, i) {
+     (abs(loadings[,f] &gt; cross)) &amp; (factorindex != i) 
+   })
+ }
+
   small_loadings &lt;- purrr::map(fnames, function(f) {
     abs(loadings[,f]) &lt; small
-  })
-  cross_loadings &lt;- purrr::map2(fnames, seq_along(fnames), function(f, i) {
-    (abs(loadings[,f] &gt; cross)) &amp; (factorindex != i) 
   })
   
   ind_table &lt;- dplyr::tibble(varlabels, loadings) %&gt;%
@@ -174,19 +182,26 @@ library(gt)</code></pre>
                              locations = cells_body(columns = fnames[f], rows = small_loadings[[f]]))
   }
   # mark cross loadings
-  for(f in seq_along(fnames)) {
-    ind_table &lt;- ind_table %&gt;%  tab_style(style = cell_text(style = &quot;italic&quot;),
-                                    locations = cells_body(columns = fnames[f], rows = cross_loadings[[f]]))
+  
+  if (nfactors &gt; 1) {
+    for (f in seq_along(fnames)) {
+      ind_table &lt;-
+        ind_table %&gt;%  tab_style(
+          style = cell_text(style = &quot;italic&quot;),
+          locations = cells_body(columns = fnames[f], rows = cross_loadings[[f]])
+        )
+    }
+    # mark non-assignable indicators
+    ind_table &lt;-
+      ind_table %&gt;%  tab_style(style = cell_fill(color = &quot;#D93B3B&quot;),
+                               locations = cells_body(rows = removable))
   }
-  # mark non-assignable indicators
-
-  ind_table &lt;- ind_table %&gt;%  tab_style(style = cell_fill(color = &quot;#D93B3B&quot;),
-                                  locations = cells_body(rows = removable))
-
+  
   # adapted from https://www.anthonyschmidt.co/post/2020-09-27-efa-tables-in-r/
   Vaccounted &lt;- x[[&quot;Vaccounted&quot;]]
-  Phi &lt;- x[[&quot;Phi&quot;]]
   colnames(Vaccounted) &lt;- fnames 
+  if (nfactors &gt; 1) {
+  Phi &lt;- x[[&quot;Phi&quot;]]
   rownames(Phi) &lt;- fnames
   colnames(Phi) &lt;- fnames
   f_table &lt;- rbind(Vaccounted, Phi) %&gt;%
@@ -194,19 +209,26 @@ library(gt)</code></pre>
     rownames_to_column(&quot;Property&quot;) %&gt;%
     mutate(across(where(is.numeric), round, 3)) %&gt;%
     gt() %&gt;% tab_header(title = &quot;Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution&quot;)
-  
+  }
+  else if(nfactors == 1) {
+    f_table &lt;- rbind(Vaccounted) %&gt;%
+      as.data.frame() %&gt;% 
+      rownames_to_column(&quot;Property&quot;) %&gt;%
+      mutate(across(where(is.numeric), round, 3)) %&gt;%
+      gt() %&gt;% tab_header(title = &quot;Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution&quot;)
+  }
+
   return(list(&quot;ind_table&quot; = ind_table, &quot;f_table&quot; = f_table))
   
 }</code></pre>
 <p>We run the function on the results:</p>
 <pre class="r"><code>tables &lt;- fa_table(res)
 tables$ind_table</code></pre>
-<pre><code>## Warning: The `.dots` argument of `group_by()` is deprecated as of dplyr 1.0.0.</code></pre>
 <style>html {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
 }
 
-#vstvcnpknp .gt_table {
+#sgxmqjddtv .gt_table {
   display: table;
   border-collapse: collapse;
   margin-left: auto;
@@ -231,7 +253,7 @@ tables$ind_table</code></pre>
   border-left-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_heading {
+#sgxmqjddtv .gt_heading {
   background-color: #FFFFFF;
   text-align: center;
   border-bottom-color: #FFFFFF;
@@ -243,7 +265,7 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_title {
+#sgxmqjddtv .gt_title {
   color: #333333;
   font-size: 125%;
   font-weight: initial;
@@ -253,7 +275,7 @@ tables$ind_table</code></pre>
   border-bottom-width: 0;
 }
 
-#vstvcnpknp .gt_subtitle {
+#sgxmqjddtv .gt_subtitle {
   color: #333333;
   font-size: 85%;
   font-weight: initial;
@@ -263,13 +285,13 @@ tables$ind_table</code></pre>
   border-top-width: 0;
 }
 
-#vstvcnpknp .gt_bottom_border {
+#sgxmqjddtv .gt_bottom_border {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_col_headings {
+#sgxmqjddtv .gt_col_headings {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -284,7 +306,7 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_col_heading {
+#sgxmqjddtv .gt_col_heading {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -304,7 +326,7 @@ tables$ind_table</code></pre>
   overflow-x: hidden;
 }
 
-#vstvcnpknp .gt_column_spanner_outer {
+#sgxmqjddtv .gt_column_spanner_outer {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -316,15 +338,15 @@ tables$ind_table</code></pre>
   padding-right: 4px;
 }
 
-#vstvcnpknp .gt_column_spanner_outer:first-child {
+#sgxmqjddtv .gt_column_spanner_outer:first-child {
   padding-left: 0;
 }
 
-#vstvcnpknp .gt_column_spanner_outer:last-child {
+#sgxmqjddtv .gt_column_spanner_outer:last-child {
   padding-right: 0;
 }
 
-#vstvcnpknp .gt_column_spanner {
+#sgxmqjddtv .gt_column_spanner {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
@@ -336,7 +358,7 @@ tables$ind_table</code></pre>
   width: 100%;
 }
 
-#vstvcnpknp .gt_group_heading {
+#sgxmqjddtv .gt_group_heading {
   padding: 8px;
   color: #333333;
   background-color: #FFFFFF;
@@ -358,7 +380,7 @@ tables$ind_table</code></pre>
   vertical-align: middle;
 }
 
-#vstvcnpknp .gt_empty_group_heading {
+#sgxmqjddtv .gt_empty_group_heading {
   padding: 0.5px;
   color: #333333;
   background-color: #FFFFFF;
@@ -373,15 +395,15 @@ tables$ind_table</code></pre>
   vertical-align: middle;
 }
 
-#vstvcnpknp .gt_from_md > :first-child {
+#sgxmqjddtv .gt_from_md > :first-child {
   margin-top: 0;
 }
 
-#vstvcnpknp .gt_from_md > :last-child {
+#sgxmqjddtv .gt_from_md > :last-child {
   margin-bottom: 0;
 }
 
-#vstvcnpknp .gt_row {
+#sgxmqjddtv .gt_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -400,7 +422,7 @@ tables$ind_table</code></pre>
   overflow-x: hidden;
 }
 
-#vstvcnpknp .gt_stub {
+#sgxmqjddtv .gt_stub {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -412,7 +434,7 @@ tables$ind_table</code></pre>
   padding-left: 12px;
 }
 
-#vstvcnpknp .gt_summary_row {
+#sgxmqjddtv .gt_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -422,7 +444,7 @@ tables$ind_table</code></pre>
   padding-right: 5px;
 }
 
-#vstvcnpknp .gt_first_summary_row {
+#sgxmqjddtv .gt_first_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -432,7 +454,7 @@ tables$ind_table</code></pre>
   border-top-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_grand_summary_row {
+#sgxmqjddtv .gt_grand_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -442,7 +464,7 @@ tables$ind_table</code></pre>
   padding-right: 5px;
 }
 
-#vstvcnpknp .gt_first_grand_summary_row {
+#sgxmqjddtv .gt_first_grand_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -452,11 +474,11 @@ tables$ind_table</code></pre>
   border-top-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_striped {
+#sgxmqjddtv .gt_striped {
   background-color: rgba(128, 128, 128, 0.05);
 }
 
-#vstvcnpknp .gt_table_body {
+#sgxmqjddtv .gt_table_body {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -465,7 +487,7 @@ tables$ind_table</code></pre>
   border-bottom-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_footnotes {
+#sgxmqjddtv .gt_footnotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -479,13 +501,13 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_footnote {
+#sgxmqjddtv .gt_footnote {
   margin: 0px;
   font-size: 90%;
   padding: 4px;
 }
 
-#vstvcnpknp .gt_sourcenotes {
+#sgxmqjddtv .gt_sourcenotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -499,53 +521,51 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#vstvcnpknp .gt_sourcenote {
+#sgxmqjddtv .gt_sourcenote {
   font-size: 90%;
   padding: 4px;
 }
 
-#vstvcnpknp .gt_left {
+#sgxmqjddtv .gt_left {
   text-align: left;
 }
 
-#vstvcnpknp .gt_center {
+#sgxmqjddtv .gt_center {
   text-align: center;
 }
 
-#vstvcnpknp .gt_right {
+#sgxmqjddtv .gt_right {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-#vstvcnpknp .gt_font_normal {
+#sgxmqjddtv .gt_font_normal {
   font-weight: normal;
 }
 
-#vstvcnpknp .gt_font_bold {
+#sgxmqjddtv .gt_font_bold {
   font-weight: bold;
 }
 
-#vstvcnpknp .gt_font_italic {
+#sgxmqjddtv .gt_font_italic {
   font-style: italic;
 }
 
-#vstvcnpknp .gt_super {
+#sgxmqjddtv .gt_super {
   font-size: 65%;
 }
 
-#vstvcnpknp .gt_footnote_marks {
+#sgxmqjddtv .gt_footnote_marks {
   font-style: italic;
   font-size: 65%;
 }
 </style>
-<div id="vstvcnpknp" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
+<div id="sgxmqjddtv" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
   <thead class="gt_header">
     <tr>
-      <th colspan="9" class="gt_heading gt_title gt_font_normal" style>Factor analysis results</th>
+      <th colspan="9" class="gt_heading gt_title gt_font_normal gt_bottom_border" style>Factor analysis results</th>
     </tr>
-    <tr>
-      <th colspan="9" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border" style></th>
-    </tr>
+    
   </thead>
   <thead class="gt_col_headings">
     <tr>
@@ -561,281 +581,231 @@ tables$ind_table</code></pre>
     </tr>
   </thead>
   <tbody class="gt_table_body">
-    <tr>
-      <td class="gt_row gt_left gt_stub">N1</td>
-      <td class="gt_row gt_right">0.815</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.103</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.004</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.111</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.047</td>
-      <td class="gt_row gt_right">0.65</td>
-      <td class="gt_row gt_right">0.35</td>
-      <td class="gt_row gt_right">1.08</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">N2</td>
-      <td class="gt_row gt_right">0.777</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.040</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.011</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.094</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.015</td>
-      <td class="gt_row gt_right">0.60</td>
-      <td class="gt_row gt_right">0.40</td>
-      <td class="gt_row gt_right">1.04</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">N3</td>
-      <td class="gt_row gt_right">0.706</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.100</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.035</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.079</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.023</td>
-      <td class="gt_row gt_right">0.55</td>
-      <td class="gt_row gt_right">0.45</td>
-      <td class="gt_row gt_right">1.07</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">N5</td>
-      <td class="gt_row gt_right">0.486</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.202</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.004</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.207</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.150</td>
-      <td class="gt_row gt_right">0.35</td>
-      <td class="gt_row gt_right">0.65</td>
-      <td class="gt_row gt_right">1.96</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">N4</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.474</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">-0.386</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">-0.135</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.095</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.080</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.49</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.51</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">2.27</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">E2</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.099</td>
-      <td class="gt_row gt_right">-0.676</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.016</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.048</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.058</td>
-      <td class="gt_row gt_right">0.54</td>
-      <td class="gt_row gt_right">0.46</td>
-      <td class="gt_row gt_right">1.07</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">E4</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.014</td>
-      <td class="gt_row gt_right">0.591</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.024</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.287</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.077</td>
-      <td class="gt_row gt_right">0.53</td>
-      <td class="gt_row gt_right">0.47</td>
-      <td class="gt_row gt_right">1.49</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">E1</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.059</td>
-      <td class="gt_row gt_right">-0.557</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.106</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.083</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.103</td>
-      <td class="gt_row gt_right">0.35</td>
-      <td class="gt_row gt_right">0.65</td>
-      <td class="gt_row gt_right">1.21</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">E5</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.152</td>
-      <td class="gt_row gt_right">0.421</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.271</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.052</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.206</td>
-      <td class="gt_row gt_right">0.40</td>
-      <td class="gt_row gt_right">0.60</td>
-      <td class="gt_row gt_right">2.60</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">E3</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.083</td>
-      <td class="gt_row gt_right">0.418</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.001</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.246</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.283</td>
-      <td class="gt_row gt_right">0.44</td>
-      <td class="gt_row gt_right">0.56</td>
-      <td class="gt_row gt_right">2.55</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">C2</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.149</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.085</td>
-      <td class="gt_row gt_right">0.666</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.081</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.039</td>
-      <td class="gt_row gt_right">0.45</td>
-      <td class="gt_row gt_right">0.55</td>
-      <td class="gt_row gt_right">1.17</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">C4</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.174</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.002</td>
-      <td class="gt_row gt_right">-0.614</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.040</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.048</td>
-      <td class="gt_row gt_right">0.45</td>
-      <td class="gt_row gt_right">0.55</td>
-      <td class="gt_row gt_right">1.18</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">C3</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.034</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.061</td>
-      <td class="gt_row gt_right">0.567</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.092</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.068</td>
-      <td class="gt_row gt_right">0.32</td>
-      <td class="gt_row gt_right">0.68</td>
-      <td class="gt_row gt_right">1.11</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">C5</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.189</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.142</td>
-      <td class="gt_row gt_right">-0.553</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.018</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.092</td>
-      <td class="gt_row gt_right">0.43</td>
-      <td class="gt_row gt_right">0.57</td>
-      <td class="gt_row gt_right">1.44</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">C1</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.069</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.027</td>
-      <td class="gt_row gt_right">0.546</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.023</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.148</td>
-      <td class="gt_row gt_right">0.33</td>
-      <td class="gt_row gt_right">0.67</td>
-      <td class="gt_row gt_right">1.19</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">A3</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.029</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.116</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.025</td>
-      <td class="gt_row gt_right">0.660</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.031</td>
-      <td class="gt_row gt_right">0.52</td>
-      <td class="gt_row gt_right">0.48</td>
-      <td class="gt_row gt_right">1.07</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">A2</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.023</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.002</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.077</td>
-      <td class="gt_row gt_right">0.640</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.032</td>
-      <td class="gt_row gt_right">0.45</td>
-      <td class="gt_row gt_right">0.55</td>
-      <td class="gt_row gt_right">1.04</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">A5</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.112</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.233</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.006</td>
-      <td class="gt_row gt_right">0.532</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.044</td>
-      <td class="gt_row gt_right">0.46</td>
-      <td class="gt_row gt_right">0.54</td>
-      <td class="gt_row gt_right">1.49</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">A4</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.057</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.064</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.193</td>
-      <td class="gt_row gt_right">0.433</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.148</td>
-      <td class="gt_row gt_right">0.28</td>
-      <td class="gt_row gt_right">0.72</td>
-      <td class="gt_row gt_right">1.74</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">A1</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.213</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.166</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.067</td>
-      <td class="gt_row gt_right">-0.414</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.058</td>
-      <td class="gt_row gt_right">0.19</td>
-      <td class="gt_row gt_right">0.81</td>
-      <td class="gt_row gt_right">1.97</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">O3</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.031</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.152</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.017</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.083</td>
-      <td class="gt_row gt_right">0.609</td>
-      <td class="gt_row gt_right">0.46</td>
-      <td class="gt_row gt_right">0.54</td>
-      <td class="gt_row gt_right">1.17</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">O5</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.132</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.098</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.025</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.043</td>
-      <td class="gt_row gt_right">-0.542</td>
-      <td class="gt_row gt_right">0.30</td>
-      <td class="gt_row gt_right">0.70</td>
-      <td class="gt_row gt_right">1.21</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">O1</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.018</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.103</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.073</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.015</td>
-      <td class="gt_row gt_right">0.508</td>
-      <td class="gt_row gt_right">0.31</td>
-      <td class="gt_row gt_right">0.69</td>
-      <td class="gt_row gt_right">1.13</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">O2</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.195</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.057</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.078</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.163</td>
-      <td class="gt_row gt_right">-0.456</td>
-      <td class="gt_row gt_right">0.26</td>
-      <td class="gt_row gt_right">0.74</td>
-      <td class="gt_row gt_right">1.75</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left gt_stub">O4</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.126</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">-0.323</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">-0.024</td>
-      <td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.174</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.371</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.25</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">0.75</td>
-      <td class="gt_row gt_right" style="background-color: #D93B3B;">2.69</td>
-    </tr>
+    <tr><td class="gt_row gt_left gt_stub">N1</td>
+<td class="gt_row gt_right">0.815</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.103</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.004</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.111</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.047</td>
+<td class="gt_row gt_right">0.65</td>
+<td class="gt_row gt_right">0.35</td>
+<td class="gt_row gt_right">1.08</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">N2</td>
+<td class="gt_row gt_right">0.777</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.040</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.011</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.094</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.015</td>
+<td class="gt_row gt_right">0.60</td>
+<td class="gt_row gt_right">0.40</td>
+<td class="gt_row gt_right">1.04</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">N3</td>
+<td class="gt_row gt_right">0.706</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.100</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.035</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.079</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.023</td>
+<td class="gt_row gt_right">0.55</td>
+<td class="gt_row gt_right">0.45</td>
+<td class="gt_row gt_right">1.07</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">N5</td>
+<td class="gt_row gt_right">0.486</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.202</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.004</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.207</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.150</td>
+<td class="gt_row gt_right">0.35</td>
+<td class="gt_row gt_right">0.65</td>
+<td class="gt_row gt_right">1.96</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">N4</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.474</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">-0.386</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">-0.135</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.095</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.080</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.49</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.51</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">2.27</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">E2</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.099</td>
+<td class="gt_row gt_right">-0.676</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.016</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.048</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.058</td>
+<td class="gt_row gt_right">0.54</td>
+<td class="gt_row gt_right">0.46</td>
+<td class="gt_row gt_right">1.07</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">E4</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.014</td>
+<td class="gt_row gt_right">0.591</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.024</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.287</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.077</td>
+<td class="gt_row gt_right">0.53</td>
+<td class="gt_row gt_right">0.47</td>
+<td class="gt_row gt_right">1.49</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">E1</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.059</td>
+<td class="gt_row gt_right">-0.557</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.106</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.083</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.103</td>
+<td class="gt_row gt_right">0.35</td>
+<td class="gt_row gt_right">0.65</td>
+<td class="gt_row gt_right">1.21</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">E5</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.152</td>
+<td class="gt_row gt_right">0.421</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.271</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.052</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.206</td>
+<td class="gt_row gt_right">0.40</td>
+<td class="gt_row gt_right">0.60</td>
+<td class="gt_row gt_right">2.60</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">E3</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.083</td>
+<td class="gt_row gt_right">0.418</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.001</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.246</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.283</td>
+<td class="gt_row gt_right">0.44</td>
+<td class="gt_row gt_right">0.56</td>
+<td class="gt_row gt_right">2.55</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">C2</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.149</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.085</td>
+<td class="gt_row gt_right">0.666</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.081</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.039</td>
+<td class="gt_row gt_right">0.45</td>
+<td class="gt_row gt_right">0.55</td>
+<td class="gt_row gt_right">1.17</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">C4</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.174</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.002</td>
+<td class="gt_row gt_right">-0.614</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.040</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.048</td>
+<td class="gt_row gt_right">0.45</td>
+<td class="gt_row gt_right">0.55</td>
+<td class="gt_row gt_right">1.18</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">C3</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.034</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.061</td>
+<td class="gt_row gt_right">0.567</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.092</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.068</td>
+<td class="gt_row gt_right">0.32</td>
+<td class="gt_row gt_right">0.68</td>
+<td class="gt_row gt_right">1.11</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">C5</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.189</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.142</td>
+<td class="gt_row gt_right">-0.553</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.018</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.092</td>
+<td class="gt_row gt_right">0.43</td>
+<td class="gt_row gt_right">0.57</td>
+<td class="gt_row gt_right">1.44</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">C1</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.069</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.027</td>
+<td class="gt_row gt_right">0.546</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.023</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.148</td>
+<td class="gt_row gt_right">0.33</td>
+<td class="gt_row gt_right">0.67</td>
+<td class="gt_row gt_right">1.19</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">A3</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.029</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.116</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.025</td>
+<td class="gt_row gt_right">0.660</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.031</td>
+<td class="gt_row gt_right">0.52</td>
+<td class="gt_row gt_right">0.48</td>
+<td class="gt_row gt_right">1.07</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">A2</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.023</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.002</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.077</td>
+<td class="gt_row gt_right">0.640</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.032</td>
+<td class="gt_row gt_right">0.45</td>
+<td class="gt_row gt_right">0.55</td>
+<td class="gt_row gt_right">1.04</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">A5</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.112</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.233</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.006</td>
+<td class="gt_row gt_right">0.532</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.044</td>
+<td class="gt_row gt_right">0.46</td>
+<td class="gt_row gt_right">0.54</td>
+<td class="gt_row gt_right">1.49</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">A4</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.057</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.064</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.193</td>
+<td class="gt_row gt_right">0.433</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.148</td>
+<td class="gt_row gt_right">0.28</td>
+<td class="gt_row gt_right">0.72</td>
+<td class="gt_row gt_right">1.74</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">A1</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.213</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.166</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.067</td>
+<td class="gt_row gt_right">-0.414</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.058</td>
+<td class="gt_row gt_right">0.19</td>
+<td class="gt_row gt_right">0.81</td>
+<td class="gt_row gt_right">1.97</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">O3</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.031</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.152</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.017</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.083</td>
+<td class="gt_row gt_right">0.609</td>
+<td class="gt_row gt_right">0.46</td>
+<td class="gt_row gt_right">0.54</td>
+<td class="gt_row gt_right">1.17</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">O5</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.132</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.098</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.025</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.043</td>
+<td class="gt_row gt_right">-0.542</td>
+<td class="gt_row gt_right">0.30</td>
+<td class="gt_row gt_right">0.70</td>
+<td class="gt_row gt_right">1.21</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">O1</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.018</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.103</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.073</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.015</td>
+<td class="gt_row gt_right">0.508</td>
+<td class="gt_row gt_right">0.31</td>
+<td class="gt_row gt_right">0.69</td>
+<td class="gt_row gt_right">1.13</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">O2</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.195</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.057</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">-0.078</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic;">0.163</td>
+<td class="gt_row gt_right">-0.456</td>
+<td class="gt_row gt_right">0.26</td>
+<td class="gt_row gt_right">0.74</td>
+<td class="gt_row gt_right">1.75</td></tr>
+    <tr><td class="gt_row gt_left gt_stub">O4</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.126</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">-0.323</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">-0.024</td>
+<td class="gt_row gt_right" style="color: #D3D3D3; font-style: italic; background-color: #D93B3B;">0.174</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.371</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.25</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">0.75</td>
+<td class="gt_row gt_right" style="background-color: #D93B3B;">2.69</td></tr>
   </tbody>
   
   
@@ -845,7 +815,7 @@ tables$ind_table</code></pre>
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
 }
 
-#udxjfwqmgj .gt_table {
+#mzajrlpkej .gt_table {
   display: table;
   border-collapse: collapse;
   margin-left: auto;
@@ -870,7 +840,7 @@ tables$ind_table</code></pre>
   border-left-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_heading {
+#mzajrlpkej .gt_heading {
   background-color: #FFFFFF;
   text-align: center;
   border-bottom-color: #FFFFFF;
@@ -882,7 +852,7 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_title {
+#mzajrlpkej .gt_title {
   color: #333333;
   font-size: 125%;
   font-weight: initial;
@@ -892,7 +862,7 @@ tables$ind_table</code></pre>
   border-bottom-width: 0;
 }
 
-#udxjfwqmgj .gt_subtitle {
+#mzajrlpkej .gt_subtitle {
   color: #333333;
   font-size: 85%;
   font-weight: initial;
@@ -902,13 +872,13 @@ tables$ind_table</code></pre>
   border-top-width: 0;
 }
 
-#udxjfwqmgj .gt_bottom_border {
+#mzajrlpkej .gt_bottom_border {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_col_headings {
+#mzajrlpkej .gt_col_headings {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -923,7 +893,7 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_col_heading {
+#mzajrlpkej .gt_col_heading {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -943,7 +913,7 @@ tables$ind_table</code></pre>
   overflow-x: hidden;
 }
 
-#udxjfwqmgj .gt_column_spanner_outer {
+#mzajrlpkej .gt_column_spanner_outer {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -955,15 +925,15 @@ tables$ind_table</code></pre>
   padding-right: 4px;
 }
 
-#udxjfwqmgj .gt_column_spanner_outer:first-child {
+#mzajrlpkej .gt_column_spanner_outer:first-child {
   padding-left: 0;
 }
 
-#udxjfwqmgj .gt_column_spanner_outer:last-child {
+#mzajrlpkej .gt_column_spanner_outer:last-child {
   padding-right: 0;
 }
 
-#udxjfwqmgj .gt_column_spanner {
+#mzajrlpkej .gt_column_spanner {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
@@ -975,7 +945,7 @@ tables$ind_table</code></pre>
   width: 100%;
 }
 
-#udxjfwqmgj .gt_group_heading {
+#mzajrlpkej .gt_group_heading {
   padding: 8px;
   color: #333333;
   background-color: #FFFFFF;
@@ -997,7 +967,7 @@ tables$ind_table</code></pre>
   vertical-align: middle;
 }
 
-#udxjfwqmgj .gt_empty_group_heading {
+#mzajrlpkej .gt_empty_group_heading {
   padding: 0.5px;
   color: #333333;
   background-color: #FFFFFF;
@@ -1012,15 +982,15 @@ tables$ind_table</code></pre>
   vertical-align: middle;
 }
 
-#udxjfwqmgj .gt_from_md > :first-child {
+#mzajrlpkej .gt_from_md > :first-child {
   margin-top: 0;
 }
 
-#udxjfwqmgj .gt_from_md > :last-child {
+#mzajrlpkej .gt_from_md > :last-child {
   margin-bottom: 0;
 }
 
-#udxjfwqmgj .gt_row {
+#mzajrlpkej .gt_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -1039,7 +1009,7 @@ tables$ind_table</code></pre>
   overflow-x: hidden;
 }
 
-#udxjfwqmgj .gt_stub {
+#mzajrlpkej .gt_stub {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -1051,7 +1021,7 @@ tables$ind_table</code></pre>
   padding-left: 12px;
 }
 
-#udxjfwqmgj .gt_summary_row {
+#mzajrlpkej .gt_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -1061,7 +1031,7 @@ tables$ind_table</code></pre>
   padding-right: 5px;
 }
 
-#udxjfwqmgj .gt_first_summary_row {
+#mzajrlpkej .gt_first_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -1071,7 +1041,7 @@ tables$ind_table</code></pre>
   border-top-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_grand_summary_row {
+#mzajrlpkej .gt_grand_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -1081,7 +1051,7 @@ tables$ind_table</code></pre>
   padding-right: 5px;
 }
 
-#udxjfwqmgj .gt_first_grand_summary_row {
+#mzajrlpkej .gt_first_grand_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -1091,11 +1061,11 @@ tables$ind_table</code></pre>
   border-top-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_striped {
+#mzajrlpkej .gt_striped {
   background-color: rgba(128, 128, 128, 0.05);
 }
 
-#udxjfwqmgj .gt_table_body {
+#mzajrlpkej .gt_table_body {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -1104,7 +1074,7 @@ tables$ind_table</code></pre>
   border-bottom-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_footnotes {
+#mzajrlpkej .gt_footnotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -1118,13 +1088,13 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_footnote {
+#mzajrlpkej .gt_footnote {
   margin: 0px;
   font-size: 90%;
   padding: 4px;
 }
 
-#udxjfwqmgj .gt_sourcenotes {
+#mzajrlpkej .gt_sourcenotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -1138,53 +1108,51 @@ tables$ind_table</code></pre>
   border-right-color: #D3D3D3;
 }
 
-#udxjfwqmgj .gt_sourcenote {
+#mzajrlpkej .gt_sourcenote {
   font-size: 90%;
   padding: 4px;
 }
 
-#udxjfwqmgj .gt_left {
+#mzajrlpkej .gt_left {
   text-align: left;
 }
 
-#udxjfwqmgj .gt_center {
+#mzajrlpkej .gt_center {
   text-align: center;
 }
 
-#udxjfwqmgj .gt_right {
+#mzajrlpkej .gt_right {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-#udxjfwqmgj .gt_font_normal {
+#mzajrlpkej .gt_font_normal {
   font-weight: normal;
 }
 
-#udxjfwqmgj .gt_font_bold {
+#mzajrlpkej .gt_font_bold {
   font-weight: bold;
 }
 
-#udxjfwqmgj .gt_font_italic {
+#mzajrlpkej .gt_font_italic {
   font-style: italic;
 }
 
-#udxjfwqmgj .gt_super {
+#mzajrlpkej .gt_super {
   font-size: 65%;
 }
 
-#udxjfwqmgj .gt_footnote_marks {
+#mzajrlpkej .gt_footnote_marks {
   font-style: italic;
   font-size: 65%;
 }
 </style>
-<div id="udxjfwqmgj" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
+<div id="mzajrlpkej" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
   <thead class="gt_header">
     <tr>
-      <th colspan="6" class="gt_heading gt_title gt_font_normal" style>Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution</th>
+      <th colspan="6" class="gt_heading gt_title gt_font_normal gt_bottom_border" style>Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution</th>
     </tr>
-    <tr>
-      <th colspan="6" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border" style></th>
-    </tr>
+    
   </thead>
   <thead class="gt_col_headings">
     <tr>
@@ -1197,93 +1165,78 @@ tables$ind_table</code></pre>
     </tr>
   </thead>
   <tbody class="gt_table_body">
-    <tr>
-      <td class="gt_row gt_left">SS loadings</td>
-      <td class="gt_row gt_right">2.570</td>
-      <td class="gt_row gt_right">2.199</td>
-      <td class="gt_row gt_right">2.029</td>
-      <td class="gt_row gt_right">1.985</td>
-      <td class="gt_row gt_right">1.586</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Proportion Var</td>
-      <td class="gt_row gt_right">0.103</td>
-      <td class="gt_row gt_right">0.088</td>
-      <td class="gt_row gt_right">0.081</td>
-      <td class="gt_row gt_right">0.079</td>
-      <td class="gt_row gt_right">0.063</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Cumulative Var</td>
-      <td class="gt_row gt_right">0.103</td>
-      <td class="gt_row gt_right">0.191</td>
-      <td class="gt_row gt_right">0.272</td>
-      <td class="gt_row gt_right">0.351</td>
-      <td class="gt_row gt_right">0.415</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Proportion Explained</td>
-      <td class="gt_row gt_right">0.248</td>
-      <td class="gt_row gt_right">0.212</td>
-      <td class="gt_row gt_right">0.196</td>
-      <td class="gt_row gt_right">0.191</td>
-      <td class="gt_row gt_right">0.153</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Cumulative Proportion</td>
-      <td class="gt_row gt_right">0.248</td>
-      <td class="gt_row gt_right">0.460</td>
-      <td class="gt_row gt_right">0.656</td>
-      <td class="gt_row gt_right">0.847</td>
-      <td class="gt_row gt_right">1.000</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Factor_1</td>
-      <td class="gt_row gt_right">1.000</td>
-      <td class="gt_row gt_right">-0.213</td>
-      <td class="gt_row gt_right">-0.187</td>
-      <td class="gt_row gt_right">-0.038</td>
-      <td class="gt_row gt_right">-0.011</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Factor_2</td>
-      <td class="gt_row gt_right">-0.213</td>
-      <td class="gt_row gt_right">1.000</td>
-      <td class="gt_row gt_right">0.230</td>
-      <td class="gt_row gt_right">0.329</td>
-      <td class="gt_row gt_right">0.167</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Factor_3</td>
-      <td class="gt_row gt_right">-0.187</td>
-      <td class="gt_row gt_right">0.230</td>
-      <td class="gt_row gt_right">1.000</td>
-      <td class="gt_row gt_right">0.203</td>
-      <td class="gt_row gt_right">0.195</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Factor_4</td>
-      <td class="gt_row gt_right">-0.038</td>
-      <td class="gt_row gt_right">0.329</td>
-      <td class="gt_row gt_right">0.203</td>
-      <td class="gt_row gt_right">1.000</td>
-      <td class="gt_row gt_right">0.193</td>
-    </tr>
-    <tr>
-      <td class="gt_row gt_left">Factor_5</td>
-      <td class="gt_row gt_right">-0.011</td>
-      <td class="gt_row gt_right">0.167</td>
-      <td class="gt_row gt_right">0.195</td>
-      <td class="gt_row gt_right">0.193</td>
-      <td class="gt_row gt_right">1.000</td>
-    </tr>
+    <tr><td class="gt_row gt_left">SS loadings</td>
+<td class="gt_row gt_right">2.570</td>
+<td class="gt_row gt_right">2.199</td>
+<td class="gt_row gt_right">2.029</td>
+<td class="gt_row gt_right">1.985</td>
+<td class="gt_row gt_right">1.586</td></tr>
+    <tr><td class="gt_row gt_left">Proportion Var</td>
+<td class="gt_row gt_right">0.103</td>
+<td class="gt_row gt_right">0.088</td>
+<td class="gt_row gt_right">0.081</td>
+<td class="gt_row gt_right">0.079</td>
+<td class="gt_row gt_right">0.063</td></tr>
+    <tr><td class="gt_row gt_left">Cumulative Var</td>
+<td class="gt_row gt_right">0.103</td>
+<td class="gt_row gt_right">0.191</td>
+<td class="gt_row gt_right">0.272</td>
+<td class="gt_row gt_right">0.351</td>
+<td class="gt_row gt_right">0.415</td></tr>
+    <tr><td class="gt_row gt_left">Proportion Explained</td>
+<td class="gt_row gt_right">0.248</td>
+<td class="gt_row gt_right">0.212</td>
+<td class="gt_row gt_right">0.196</td>
+<td class="gt_row gt_right">0.191</td>
+<td class="gt_row gt_right">0.153</td></tr>
+    <tr><td class="gt_row gt_left">Cumulative Proportion</td>
+<td class="gt_row gt_right">0.248</td>
+<td class="gt_row gt_right">0.460</td>
+<td class="gt_row gt_right">0.656</td>
+<td class="gt_row gt_right">0.847</td>
+<td class="gt_row gt_right">1.000</td></tr>
+    <tr><td class="gt_row gt_left">Factor_1</td>
+<td class="gt_row gt_right">1.000</td>
+<td class="gt_row gt_right">-0.213</td>
+<td class="gt_row gt_right">-0.187</td>
+<td class="gt_row gt_right">-0.038</td>
+<td class="gt_row gt_right">-0.011</td></tr>
+    <tr><td class="gt_row gt_left">Factor_2</td>
+<td class="gt_row gt_right">-0.213</td>
+<td class="gt_row gt_right">1.000</td>
+<td class="gt_row gt_right">0.230</td>
+<td class="gt_row gt_right">0.329</td>
+<td class="gt_row gt_right">0.167</td></tr>
+    <tr><td class="gt_row gt_left">Factor_3</td>
+<td class="gt_row gt_right">-0.187</td>
+<td class="gt_row gt_right">0.230</td>
+<td class="gt_row gt_right">1.000</td>
+<td class="gt_row gt_right">0.203</td>
+<td class="gt_row gt_right">0.195</td></tr>
+    <tr><td class="gt_row gt_left">Factor_4</td>
+<td class="gt_row gt_right">-0.038</td>
+<td class="gt_row gt_right">0.329</td>
+<td class="gt_row gt_right">0.203</td>
+<td class="gt_row gt_right">1.000</td>
+<td class="gt_row gt_right">0.193</td></tr>
+    <tr><td class="gt_row gt_left">Factor_5</td>
+<td class="gt_row gt_right">-0.011</td>
+<td class="gt_row gt_right">0.167</td>
+<td class="gt_row gt_right">0.195</td>
+<td class="gt_row gt_right">0.193</td>
+<td class="gt_row gt_right">1.000</td></tr>
   </tbody>
   
   
 </table></div>
 <p>The function returns two tables: <code>ind_table</code> for the factor (pattern) loadings, and <code>f_table</code> for aspects at the factor-level. The former table displays the relevant information for each indicator; the use of italics and colors makes it easy to grasp the structure of factor (pattern) loadings. Highlighted in red, we see that N4 and 04 indicators are not represented well in the EFA because they load diffusely over multiple factors.</p>
-<p>You can supply custom values for the conditional formatting of the table:
-- <code>diffuse</code> specifies the minimum difference an indicator needs to have between factor loadings in order to indicate a clear loading on just one factor, and not diffuse loadings over multiple factors. Diffuse indicators are labelled as red in the table.
-- <code>small</code> specifies when a loading is considered small; these loadings are printed in light gray.
-- <code>cross</code> specifies when a loading is considered to be a cross-loading; these loadings are printed in oblique black.</p>
+<p>You can supply custom values for the conditional formatting of the table:</p>
+<ul>
+<li><code>diffuse</code> specifies the minimum difference an indicator needs to have between factor loadings in order to indicate a clear loading on just one factor, and not diffuse loadings over multiple factors. Diffuse indicators are labelled as red in the table.</li>
+<li><code>small</code> specifies when a loading is considered small; these loadings are printed in light gray.</li>
+<li><code>cross</code> specifies when a loading is considered to be a cross-loading; these loadings are printed in oblique black.</li>
+</ul>
+<p>The <code>fa_table()</code> function is a work in progress and the latest version can be found at: <a href="https://github.com/franciscowilhelm/r-collection/blob/master/fa_table.R" class="uri">https://github.com/franciscowilhelm/r-collection/blob/master/fa_table.R</a></p>
+<p>Import it to R via:
+<code>source("https://raw.githubusercontent.com/franciscowilhelm/r-collection/master/fa_table.R")</code></p>
 </div>

@@ -47,15 +47,21 @@ print(res)
 Below is the `fa_table` function that takes the factor analysis object from `psych::fa()` as its input and returns a clean table. Some code elements were adapted from `sjPlot::fa_tab()` and [a blogpost by Anthony Schmidt](https://www.anthonyschmidt.co/post/2020-09-27-efa-tables-in-r/). 
 
 ```{r}
-fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", diffuse = .10, small = .30, cross = .20) {
+fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", diffuse = .10, small = .30, cross = .20, sort = TRUE) {
   #get sorted loadings
   require(dplyr)
   require(purrr)
   require(tibble)
   require(gt)
-  x <- psych::fa.sort(x)
+  if(sort == TRUE) {
+    x <- psych::fa.sort(x)
+  }
   if(!is.null(varlabels)) {
-    varlabels <- varlabels[x$order]
+    if(length(varlabels) != nrow(x$loadings)) { warning("Number of variable labels and number of variables are unequal. Check your input!",
+                                                        call. = FALSE) }
+    if(sort == TRUE) {
+      varlabels <- varlabels[x$order]
+      }
   }
   if(is.null(varlabels)) {varlabels <- rownames(x$loadings)}
 
@@ -65,7 +71,8 @@ fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", dif
   factornamer <- function(nfactors) {
     paste0("Factor_", 1:nfactors)}
   
-  fnames <- factornamer(ncol(loadings))
+  nfactors <- ncol(loadings)
+  fnames <- factornamer(nfactors)
   names(loadings) <- fnames
   
   # prepare locations
@@ -96,14 +103,15 @@ fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", dif
     # have unclear loadings
     return(removers)
   }
- 
- removable <- getRemovableItems(loadings)
- 
+ if(nfactors > 1) {
+   removable <- getRemovableItems(loadings)
+   cross_loadings <- purrr::map2(fnames, seq_along(fnames), function(f, i) {
+     (abs(loadings[,f] > cross)) & (factorindex != i) 
+   })
+ }
+
   small_loadings <- purrr::map(fnames, function(f) {
     abs(loadings[,f]) < small
-  })
-  cross_loadings <- purrr::map2(fnames, seq_along(fnames), function(f, i) {
-    (abs(loadings[,f] > cross)) & (factorindex != i) 
   })
   
   ind_table <- dplyr::tibble(varlabels, loadings) %>%
@@ -120,19 +128,26 @@ fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", dif
                              locations = cells_body(columns = fnames[f], rows = small_loadings[[f]]))
   }
   # mark cross loadings
-  for(f in seq_along(fnames)) {
-    ind_table <- ind_table %>%  tab_style(style = cell_text(style = "italic"),
-                                    locations = cells_body(columns = fnames[f], rows = cross_loadings[[f]]))
+  
+  if (nfactors > 1) {
+    for (f in seq_along(fnames)) {
+      ind_table <-
+        ind_table %>%  tab_style(
+          style = cell_text(style = "italic"),
+          locations = cells_body(columns = fnames[f], rows = cross_loadings[[f]])
+        )
+    }
+    # mark non-assignable indicators
+    ind_table <-
+      ind_table %>%  tab_style(style = cell_fill(color = "#D93B3B"),
+                               locations = cells_body(rows = removable))
   }
-  # mark non-assignable indicators
-
-  ind_table <- ind_table %>%  tab_style(style = cell_fill(color = "#D93B3B"),
-                                  locations = cells_body(rows = removable))
-
+  
   # adapted from https://www.anthonyschmidt.co/post/2020-09-27-efa-tables-in-r/
   Vaccounted <- x[["Vaccounted"]]
-  Phi <- x[["Phi"]]
   colnames(Vaccounted) <- fnames 
+  if (nfactors > 1) {
+  Phi <- x[["Phi"]]
   rownames(Phi) <- fnames
   colnames(Phi) <- fnames
   f_table <- rbind(Vaccounted, Phi) %>%
@@ -140,7 +155,15 @@ fa_table <- function(x, varlabels = NULL, title = "Factor analysis results", dif
     rownames_to_column("Property") %>%
     mutate(across(where(is.numeric), round, 3)) %>%
     gt() %>% tab_header(title = "Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution")
-  
+  }
+  else if(nfactors == 1) {
+    f_table <- rbind(Vaccounted) %>%
+      as.data.frame() %>% 
+      rownames_to_column("Property") %>%
+      mutate(across(where(is.numeric), round, 3)) %>%
+      gt() %>% tab_header(title = "Eigenvalues, Variance Explained, and Factor Correlations for Rotated Factor Solution")
+  }
+
   return(list("ind_table" = ind_table, "f_table" = f_table))
   
 }
@@ -159,6 +182,12 @@ tables$f_table
 The function returns two tables: `ind_table` for the factor (pattern) loadings, and `f_table` for aspects at the factor-level. The former table displays the relevant information for each indicator; the use of italics and colors makes it easy to grasp the structure of factor (pattern) loadings. Highlighted in red, we see that N4 and 04 indicators are not represented well in the EFA because they load diffusely over multiple factors.
 
 You can supply custom values for the conditional formatting of the table: 
+
 - `diffuse` specifies the minimum difference an indicator needs to have between factor loadings in order to indicate a clear loading on just one factor, and not diffuse loadings over multiple factors. Diffuse indicators are labelled as red in the table.
 - `small` specifies when a loading is considered small; these loadings are printed in light gray.
 - `cross` specifies when a loading is considered to be a cross-loading; these loadings are printed in oblique black.
+
+The `fa_table()` function is a work in progress and the latest version can be found at: https://github.com/franciscowilhelm/r-collection/blob/master/fa_table.R
+
+Import it to R via:
+`source("https://raw.githubusercontent.com/franciscowilhelm/r-collection/master/fa_table.R")`
